@@ -1,0 +1,27 @@
+Problems that need to be solved: 
+
+1. How to recognize the node with the final solution
+2. How to orient robot to perfectly match target frame 
+3. How does the robot navigate already during the data collection phase?
+4. map the best route to the node 
+
+
+Flow: 
+
+A) get to the node in the most optimal way possible 
+B) Achieve the correct position/orientation of the target frame 
+
+
+Challenges 
+
+A)  
+    optimal: shortest amount of time - limit the back and forth exchanges from network and agent - limit single tick movements 
+    wall detection and collision
+    recognize when you are in a long enough hallway to go straight 
+    how to stay in the middle of the path 
+    when to turn - how to detect corners 
+    Is the maze already mapped out? use data from previous nodes to navigate 
+B)  
+    garuantee target frame 
+    find position of target frame and orientation to exactly match 
+        - How????? what are the constraints/
