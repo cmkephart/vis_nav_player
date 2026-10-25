@@ -9,6 +9,10 @@ to stay smooth. Any arrow, space or escape hands control straight back to you.
 
     uv run source/final_agent.py --local 7            # normal
     uv run source/final_agent.py --local 7 --probe    # passive: never moves, only measures
+    uv run source/final_agent.py --local 7 --auto-checkin   # phase B checks in without asking
+
+By default phase B turns and drives but does NOT check in: when it would, the status column
+shows "READY -- press SPACE" and the decision is yours.
 
 --probe is for finding out where the goal photos start to match: drive around yourself and
 watch the "matches per view" line in the status column.
@@ -34,7 +38,7 @@ from final_approach import (
     load_goal_views,
     place_scores,
 )
-from vis_nav_sdk import WAIT, Observation, SessionInfo, run
+from vis_nav_sdk import WAIT, Action, Observation, SessionInfo, run
 
 LOGS = Path("logs")
 
@@ -56,7 +60,7 @@ def report(where: str) -> None:
 
 
 class FinalAgent(BaselineAgent):
-    def __init__(self, data_dir: Path, *, handoff_hops: int = 5, probe: bool = False,
+    def __init__(self, data_dir: Path, *, handoff_hops: int = 5, probe: bool = False, confirm: bool = True,
                  use_feature_goal: bool = False, measure_every: int = 8, **kwargs) -> None:
         super().__init__(data_dir, **kwargs)
         self.feature_goal_node: int | None = None
@@ -73,6 +77,8 @@ class FinalAgent(BaselineAgent):
         self._engaged = False
         self._gave_up = False
         self.probe = probe
+        self.confirm = confirm  # phase B aligns but YOU press space to check in
+        self._ready: str | None = None
         self.final: FinalApproach | None = None
         self._best = 0
         self.tag = "manual"
@@ -123,6 +129,7 @@ class FinalAgent(BaselineAgent):
         self._move = None
         self._engaged = False
         self._gave_up = False
+        self._ready = None
         try:
             self.final = FinalApproach(K, info.targets)
             LOGS.mkdir(exist_ok=True)
@@ -169,6 +176,7 @@ class FinalAgent(BaselineAgent):
             self._engaged = True  # latched: phase B keeps control through its look-around scans
         if keys_held:
             self.final.reset_budget()  # you drove: phase B gets a fresh budget next time
+            self._ready = None
         if keys_held or self._gave_up:
             self._engaged = False  # you took over, or phase B had nothing to do (scanned a full circle)
         engaged = self._engaged  # only on a confirmed goal match: the hop count misfired near goals
@@ -178,6 +186,19 @@ class FinalAgent(BaselineAgent):
             self.final._expect = None  # phase B's probe turn didn't happen: don't judge the next frame by it
         if execute and self.final.rows:
             self.final.rows[-1]["executed"] = 1
+        if execute and self.confirm and (self._move is Action.CHECKIN or self._move == Action.CHECKIN):
+            # confirm mode: phase B is aligned and would check in -- leave that decision to you
+            est = self.final.last
+            if self._ready is None:
+                self._ready = (f"READY -- press SPACE to check in "
+                               f"(heading {est.yaw_front:+.1f} deg, front view {est.inliers} inliers). "
+                               f"Not close enough? nudge with the arrows, then let go again")
+                print("phase B:", self._ready, flush=True)
+            if self.final.rows:
+                self.final.rows[-1]["executed"] = 0
+                self.final.rows[-1]["note"] = "READY (waiting for space)"
+            self._move = None
+            return action
         if execute:
             move, self._move = self._move, None  # one move per frame
             self.final.charge(move)
@@ -187,6 +208,8 @@ class FinalAgent(BaselineAgent):
     def hud(self) -> list[str]:
         lines = super().hud()
         if self.final is not None:
+            if self._ready:
+                lines.append(f">>> {self._ready}")
             lines.append(f"phase B{' (probe)' if self.probe else ''}: {self.final.status}")
         return lines
 
@@ -208,6 +231,8 @@ if __name__ == "__main__":
     parser.add_argument("--top-k", type=int, default=30, help="visual shortcut edges")
     parser.add_argument("--handoff", type=int, default=5, help="hand over at this many hops")
     parser.add_argument("--probe", action="store_true", help="measure only, never move")
+    parser.add_argument("--auto-checkin", action="store_true",
+                        help="let phase B check in by itself (default: it says READY and you press space)")
     parser.add_argument("--feature-goal", action="store_true",
                         help="EXPERIMENTAL: pick the goal node from local features (picked a wrong place on maze 7)")
     parser.add_argument("--every", type=int, default=8, help="far from the goal, match every Nth frame")
@@ -218,6 +243,7 @@ if __name__ == "__main__":
         cli.exploration_data(args, args.data),
         handoff_hops=args.handoff,
         probe=args.probe,
+        confirm=not args.auto_checkin,
         use_feature_goal=args.feature_goal,
         measure_every=args.every,
         n_clusters=args.n_clusters,

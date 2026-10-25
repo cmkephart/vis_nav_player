@@ -53,6 +53,9 @@ class Params:
     # The left view matches strongly from much further (35 inliers at 0.25 m), hence its high bar.
     spot_inliers: tuple = (35, 80, 50, 35)
     checkin_inliers: int = 35       # front >= 35 with |yaw| <= 3: worst 0.082 m over 3 runs (full points <= 0.1)
+    checkin_parallax: float = float("inf")  # OFF. A 22 px limit helped on maze 202 but in a later rehearsal the
+                                    # goal's parallax was 30-40 px ON the spot (114-180 inliers) and it cost
+                                    # ~200 ticks of wandering. With confirm mode the driver judges distance.
     checkin_fallback: int = 30      # after max_nudges, accept front >= 30: 3 of 112 frames were 0.10-0.105 m
     scan_ticks: int = 5             # no lock: turn this much (~17 deg) and look again ...
     max_scans: int = 22             # ... for about a full circle, then give up (return None)
@@ -367,7 +370,7 @@ class FinalApproach:
                 if abs(e) > p.yaw_tol:
                     return self._turn(e), f"align heading ({e:+.0f} deg)"
                 front = est.inliers if est.view == 0 else 0
-                if front >= p.checkin_inliers:
+                if front >= p.checkin_inliers and est.parallax <= p.checkin_parallax:
                     return Action.CHECKIN, "check in"
                 if self.legs >= p.max_legs and front >= p.checkin_fallback:
                     return Action.CHECKIN, f"check in (fallback after {self.legs} legs)"
