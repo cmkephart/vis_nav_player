@@ -29,7 +29,13 @@ from pathlib import Path
 import cli
 import cv2
 import numpy as np
+import baseline_agent as _kit
 from baseline_agent import BaselineAgent
+
+# Louie's upload changed these kit values; restore the ones phase B was rehearsed with.
+# (Module globals: affects this process only, so final_route_agent.py keeps Louie's 250.)
+_kit.MIN_SHORTCUT_GAP = 50
+_kit.PREVIEW_NODES = 5
 from final_approach import (
     FinalApproach,
     GoalMatcher,
