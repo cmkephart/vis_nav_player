@@ -172,8 +172,7 @@ class FinalRouteAgent(RouteAgent):
         if execute:
             move, self._b_move = self._b_move, None  # one move per frame
             self.final.charge(move)
-            # same format as the keyboard's moves, so the tracker sees (and logs) what phase B did
-            return move if _is(move, Action.CHECKIN) else (move, 1)
+            return move  # phase B already returns (Action, n) tuples, or a bare CHECKIN
         return action
 
     def _space_guard(self, keyboard, out, was_ready: bool):
