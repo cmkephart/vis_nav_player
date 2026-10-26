@@ -18,3 +18,8 @@ wheels/
 vis_nav_player.log
 .ruff_cache/
 .pytest_cache/
+
+# route tracker output
+tracking_debug/
+runs/
+tracking_log.csv

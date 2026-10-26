@@ -32,6 +32,7 @@ import cli  # noqa: E402
 import cv2  # noqa: E402
 from final_approach import FinalApproach, intrinsics  # noqa: E402
 from route_agent import RouteAgent  # noqa: E402  (pulls stable tracking_agent + baseline_agent)
+import route_agent; route_agent.GOAL_MIN_CLUSTER = 20  # accept a clear-winner goal vote
 from vis_nav_sdk import WAIT, Action, SessionInfo, run  # noqa: E402
 
 LOGS = Path("logs")
