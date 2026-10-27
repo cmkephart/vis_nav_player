@@ -28,6 +28,7 @@ import cv2
 import numpy as np
 import goal_picker as GP
 import tr_map as TM
+from drift_trim import DriftTrim
 from final_approach import FinalApproach, intrinsics
 from keyboard_agent import KeyboardAgent
 from tr_follow import Follower
@@ -64,7 +65,8 @@ def _is(a, target) -> bool:
 class NavAgent(KeyboardAgent):
     def __init__(self, data_dir: Path, cache_dir: Path, *, handoff: int = 8, probe: bool = False,
                  confirm: bool = True, guard_space: bool = True, open_picture: bool = True,
-                 learn: bool = True) -> None:
+                 learn: bool = True, trim: bool = True) -> None:
+        self.trim_enabled = trim
         self.data_dir = Path(data_dir)
         self.cache_dir = Path(cache_dir)
         self.m = TM.build(self.data_dir, self.cache_dir)
@@ -119,6 +121,7 @@ class NavAgent(KeyboardAgent):
         self._rec = None
         self._last_out = None
         self._far_warn = False
+        self.trim = DriftTrim(enabled=getattr(self, "trim_enabled", True))
 
     # ------------------------------------------------------------------ setup: goal candidates, route, phase B
     def setup(self, info: SessionInfo) -> None:
@@ -227,12 +230,14 @@ class NavAgent(KeyboardAgent):
                     moved = n if ("FORWARD" in name or "BACKWARD" in name) else 0
                     key_turn = (3.44 * n if "LEFT" in name else -3.44 * n if "RIGHT" in name else 0.0)
                     self.follow.localise(obs.image, moved_ticks=moved, key_turn=key_turn)
+                    self.trim.observe(self.follow.last_dyaw, name, n)
                     self._hint = self.follow.stable_hint()
                     self._panel = self._route_panel()
                 except Exception:
                     report("route follower")
                 self._ms = (time.perf_counter() - t0) * 1000
         action = super().act(obs)
+        action = self._trim(action)
         was_ready = self._ready is not None
         try:
             out = self._phase_b(action)
@@ -266,6 +271,21 @@ class NavAgent(KeyboardAgent):
             if not getattr(self, "_rec_warned", False):
                 self._rec_warned = True
                 report("run recording (the run continues)")
+
+    def _trim(self, action):
+        """Cancel the server's forward drift on plain 1-tick FORWARD presses (FORWARD -> FORWARD+turn, same tick)."""
+        try:
+            if (isinstance(action, tuple) and len(action) > 1 and action[1] == 1
+                    and _act(action) == Action.FORWARD):
+                side = self.trim.correct(False, False)
+                if side:
+                    return (Action.FORWARD | getattr(Action, side), 1)
+        except Exception:
+            if not getattr(self, "_trim_warned", False):
+                self._trim_warned = True
+                report("drift trim (disabled for this run)")
+            self.trim.enabled = False
+        return action
 
     def _keys(self) -> None:
         keys = self.viewer.keys() if getattr(self, "viewer", None) is not None else None
@@ -418,6 +438,7 @@ class NavAgent(KeyboardAgent):
                          + (f"match {fx.inliers} | view off {fx.yaw:+.0f} deg" if fx else f"no match ({f.misses})")
                          + f" | {self._ms:.0f} ms" + (f" | goal candidate {self.chosen + 1} (1-{len(self.cands)} to switch)"
                                                        if self.cands else ""))
+        lines.append(self.trim.status())
         if self.final is not None:
             lines.append(f"phase B{' (probe)' if self.probe else ''}: {self.final.status}")
         return lines
@@ -441,10 +462,11 @@ if __name__ == "__main__":
     parser.add_argument("--single-space", action="store_true", help="disable the double-SPACE guard")
     parser.add_argument("--no-open", action="store_true", help="don't open logs/goal_candidates.png automatically")
     parser.add_argument("--no-learn", action="store_true", help="ignore earlier drives in runs/ (exploration data only)")
+    parser.add_argument("--no-trim", action="store_true", help="don't cancel the measured forward drift")
     args = parser.parse_args()
     challenge = cli.challenge(args)
     data = cli.exploration_data(args, args.data)
     agent = NavAgent(data, Path("cache") / challenge.replace(":", "-"), handoff=args.handoff, probe=args.probe,
                      confirm=not args.auto_checkin, guard_space=not args.single_space, open_picture=not args.no_open,
-                     learn=not args.no_learn)
+                     learn=not args.no_learn, trim=not args.no_trim)
     run(agent, challenge, **cli.run_options(args))

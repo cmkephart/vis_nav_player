@@ -112,6 +112,7 @@ class Follower:
         self.turned = 0.0              # deg turned LEFT since the last fix
         self.moved = 0.0               # forward/backward ticks since the last fix
         self.last_need = None          # turn that was needed at the last fix (deg, left +)
+        self.last_dyaw = None          # measured turn between the last two camera frames (deg, left +)
 
     # ------------------------------------------------------------------ localisation
     def _candidates(self, live_thumb: np.ndarray, wide: bool) -> list[int]:
@@ -137,6 +138,7 @@ class Follower:
         if self.prev_live is not None:
             a, b = ratio_pairs(self.prev_live, live)
             r = rotation_fit(a, b, self.K) if a is not None else None
+            self.last_dyaw = r[0] if (r is not None and r[2] >= 20) else None   # for the drift estimate
             if r is not None and r[2] >= 15:
                 self.turned += r[0]
             elif key_turn is not None:

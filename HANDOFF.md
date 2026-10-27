@@ -71,6 +71,19 @@ The fallback (`final_route_agent.py` + picker) still works.
    - The console should say `nav: learned from 1 earlier drive(s)`, and the route should be ~1,426 ticks.
    - Goal: SPL ≥ 0.5 (1 point) or ≥ 0.75 (2 points). This rehearses challenge attempts 2–3 exactly.
    - Also watch for the guard message at look-alikes and for turn-memory hints.
+0b. **Tue afternoon results:** maze 88 rehearsal: drive 1 ~8/10 (SPL ≈ 0.72), drive 2 learned **10/10 (SPL 1.00)**.
+   **Online development challenge `515b23a3c14a`:** 7/10, SPL 0.68. The download, pre-flight check and connection all
+   worked (network ~15 ms per step).
+   - The driver felt the robot veer. Measured on that drive: **forward ticks turn the robot +1.2..+2.4° LEFT per tick**
+     on the server; a local control drive measures +0.07. Turn ticks are 3.40–3.44° in both.
+   - The local simulator's `drawn_bias()` = [1, 1, 0]; the third value is presumably this drift, drawn per server
+     session.
+   - Added `drift_trim.py`: it estimates the drift from frame-to-frame rotation on forward ticks (window 40; on at
+     ≥ 30 samples, ≥ 0.6°/tick, 70% agreement) and turns some plain FORWARD presses into FORWARD+turn at no tick
+     cost. Offline: on the trial drive it switches on at step 73; on a local drive it gives only 3 stray trims.
+   - **Not yet driven live.** `--no-trim` disables it.
+   - **Security:** the API key had been committed in `.env.example` (commit 282c1ea, public). Blank that file and
+     regenerate the key if possible; the key belongs in `.env` only.
 1. **Live test of the fixed `nav_agent` on a fresh unseen seed** (not 3, 7, 11, 21, 25, 42, 58, 101, 202, 303, 314),
    e.g. `--local 77`.
    - Confirm that a number-key tap registers (console `nav: goal = candidate N` / `(… already the goal)`).

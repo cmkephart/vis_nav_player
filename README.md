@@ -52,6 +52,7 @@ Options for `nav_agent.py` only:
 
 - `--no-open`: don't pop up the candidate picture.
 - `--no-learn`: ignore earlier drives in `runs/` (plan from the exploration data only).
+- `--no-trim`: don't cancel the measured forward drift (see section 4).
 - `--handoff N`: how close to the end of the route (in route frames) phase B starts measuring every frame.
 
 ## 3. Driving `nav_agent.py`
@@ -131,6 +132,13 @@ Every drive is saved to `runs/nav_<time>.pkl` (all frames, keys and hints). **Ke
   backup). Until you drive more than 10 ticks, it can still tell you which way the route is.
 - It also blocks phase B from taking over at a look-alike while the route says the goal is far.
 
+**Drift trim (`drift_trim.py`).** On the course server, driving forward also turns the robot: on the development
+challenge, about 1.2–2.4° **left** per forward tick, while local mazes have none. The agent measures this from
+consecutive camera frames on your forward ticks. Once the estimate is consistent (≥ 30 samples, ≥ 0.6°/tick, 70% on
+one side), it turns some of your plain FORWARD ticks into FORWARD+turn, which still costs one tick each, so you drive
+straight at no SPL cost. It never touches your turns or phase B's moves. The HUD shows
+`drift: forward veers LEFT 1.5 deg/tick, trim ON (n)`.
+
 **Learning (`tr_map.add_runs`)** adds your earlier drives of the same maze as extra drives (every 2nd frame),
 linked to exploration frames at ≤ 10 px parallax. Everything you drove is drivable, so routes may use it.
 
@@ -145,7 +153,10 @@ path (maze 21: 2,579 ticks vs 532 optimal; maze 42: 1,992 vs 571). If you cut co
 | 21 (3rd drive, known) | nav_agent | 6/10, 0.04 m, 1°, SPL 0.30 |
 | 42 (unseen) | nav_agent | 6/10, 0.07 m, 1°, SPL 0.34; hints "much better than before" |
 | 77 (unseen) | nav_agent | 6/10, 0.02 m, 1°, SPL 0.44; one look-alike READY (now guarded), some dead ends |
-| **77 (2nd drive, learned route)** | **nav_agent + learning** | **7/10, 0.02 m, 1°, SPL 0.52**: route 1,410 ticks (3,534 without learning) |
+| 77 (2nd drive, learned route) | nav_agent + learning | 7/10, 0.02 m, 1°, SPL 0.52: route 1,410 ticks (3,534 without learning) |
+| 88 (unseen), drive 1 | nav_agent | ~8/10 (783 steps, SPL ≈ 0.72) |
+| **88, drive 2 (learned)** | **nav_agent + learning** | **10/10, 0.04 m, 0°, SPL 1.00** (437 steps; oracle 562) |
+| **online development challenge `515b23a3c14a`** | **nav_agent** | **7/10, 0.09 m, 1°, SPL 0.68**; the server's forward drift was felt → drift trim added |
 | 202 (route known) | final_agent | 9/10, SPL 1.00 (0.11 m) |
 | 7 (route known) | final_agent | 9/10, SPL 0.90 |
 | 58, 101, 314, 303, 202 (first drives) | final_agent | 6/10 each, SPL 0.11–0.32 |
@@ -163,6 +174,7 @@ The agent panel shows about 54 characters per line, so the HUD wraps long lines.
 | `tr_map.py` | offline route map (features, turns, same-pose links, goal candidates, routes) | current |
 | `tr_follow.py` | live route follower + hint text | current |
 | `goal_picker.py` | candidate picture, number keys, static-noise check | shared by nav_agent and final_route_agent |
+| `drift_trim.py` | measures and cancels the server's forward drift | current |
 | `final_approach.py` | **phase B** | frozen |
 | `final_agent.py` | baseline hints + phase B | frozen fallback |
 | `final_route_agent.py` | Louie's route agent + phase B + picker | fallback |
@@ -218,7 +230,8 @@ hint = f.stable_hint()
 
 ## 9. Challenge-day checklist
 
-1. `git pull`, and check that `.env` has `VIS_NAV_CHALLENGE=da90a443e215`.
+1. `git pull`, and check that `.env` (not `.env.example`) has your API key and `VIS_NAV_CHALLENGE=da90a443e215`.
+   Never put the key in `.env.example`: that file is tracked by git.
 2. `uv run source/nav_agent.py`: it downloads the data and builds the cache **before** connecting (3–5 min).
 3. Choose the goal from the picture, drive, let go near the goal, and press SPACE at READY.
 4. After each attempt, back up `runs/nav_*.pkl` and `logs/` (for the report). **Leave `runs/` in place**:
@@ -229,6 +242,6 @@ hint = f.stable_hint()
 
 ## 10. Hand-in zip (flat)
 
-`nav_agent.py, tr_map.py, tr_follow.py, goal_picker.py, final_approach.py, keyboard_agent.py, cli.py`, plus
+`nav_agent.py, tr_map.py, tr_follow.py, goal_picker.py, drift_trim.py, final_approach.py, keyboard_agent.py, cli.py`, plus
 `final_route_agent.py, route_agent.py, tracking_agent.py, final_agent.py, baseline_agent.py, vlad.py` if a fallback
 agent was used. Not `source/files.zip` (old snapshot).
