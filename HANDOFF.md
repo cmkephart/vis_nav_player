@@ -1,4 +1,4 @@
-# HANDOFF — state after the Mon 10/26 – Tue 10/27 overnight session
+# HANDOFF — state after Tue 10/27 midday (overnight session + maze-77 follow-up)
 
 Read `README.md` first (setup, agents, driving, repo map). This file is the *working state*: what was decided, why,
 the evidence, how to work on it offline, and what is left. It supersedes `PROJECT_STATE.md` and
@@ -16,8 +16,14 @@ was rebuilt from scratch as **`nav_agent.py`** (teach-and-repeat along recorded 
 route hints proved unreliable. On the one fair test so far (**unseen maze 42**) it reached the goal, scoring 6/10 with
 SPL 0.34; the driver said the hints were "much much better than before, still a little finicky". Replaying that drive
 offline led to three fixes (corner-cutting turn hints, a backward jump near the goal, the lost message near the goal)
-and a fix for number-key taps. **None of these fixes has been driven live yet.** The fallback
-(`final_route_agent.py` + picker) still works.
+and a fix for number-key taps.
+
+**Tue midday, unseen maze 77:** 6/10, SPL 0.44 (best so far); the key-tap fix worked live. Three new features came
+from replaying that drive: a **look-alike guard** (phase B can't take over while the route says the goal is more than
+60 frames away; hold G to override), **turn memory** when lost, and **dead-end warnings**. The biggest one:
+**learning from earlier drives**: your drives of the same maze in `runs/` join the map, shortening the route on
+maze 77 from 3,534 to 1,426 ticks. **Learning, the guard and turn memory are tested on replays only, not yet live.**
+The fallback (`final_route_agent.py` + picker) still works.
 
 ## 2. Decisions and the evidence behind them
 
@@ -31,6 +37,9 @@ and a fix for number-key taps. **None of these fixes has been driven live yet.**
 | Routes only through recorded driving + same-pose links | the driver warned of wall gaps you can see through but not pass, and many dead ends. "Saw it" links (Louie's overlaps) can cross such gaps; same-pose links can't |
 | Track along the route only | Louie's tracker matched the whole maze: on maze 21 the hint text changed on 450 of 657 updates, with 14 jumps of more than 30 nodes |
 | Steer at 0.25 m ahead, turn threshold 30° | replay of the real maze-42 drive: at 0.5 m / 20° there were 291 steps of "TURN" while the driver (correctly) drove FORWARD; 0.25 m / 30° gives 158 |
+| Look-alike guard: phase B can't engage while the route has a fix and > 60 frames remain (G overrides) | maze 77: phase B saw 81 aligned inliers at route ~317 of 713 (real goal at 708: 140 inliers). The follower had a fix there for 18/18 frames; on replay both false-positive spans are blocked |
+| Turn memory when lost (≤ 10 ticks driven since the last fix) | maze 77: the driver turned against a hint at route 16 and the follower said "not sure" for 162 steps. On replay "not sure" fell 579 → 318, with 283 steps of turn guidance |
+| Learn from the driver's own drives | maze 77: the driver's live view bridged two explorer passes that never share a pose (13–37 px between them), so the exploration data alone can't link them. Adding the drive: route 3,534 → 1,426 ticks. Maze 42: drive 2 replayed on the route learned from drive 1 tracked to the end with no backward jumps; route 1,992 → 1,543 |
 | Far jumps: 2 confirmations + parallax ≤ 25 px | replay: after 33 lost frames near the goal it accepted route frame 210 (from 388) at 69 px parallax → "go back" hints. Fixed: 0 backward jumps on replay |
 
 ## 3. Facts learned this session (not in older notes)
@@ -47,13 +56,18 @@ and a fix for number-key taps. **None of these fixes has been driven live yet.**
   of record k+1 best describes the motion from frame k to k+1.
 * **Server data includes `target.jpg`** (the `record()` docstring says it writes "the format the server hands
   out"), so `nav_agent` pre-scores the goal before connecting.
-* **Oracle routes:** maze 21 = 532 ticks (spawn cell (13,1), goal (16,23)); maze 42 = 571 (spawn (13,1), goal (29,19)).
+* **Oracle routes:** maze 21 = 532 ticks (spawn cell (13,1), goal (16,23)); maze 42 = 571 (spawn (13,1), goal (29,19));
+  maze 77 = 1,009 (spawn (13,1), goal (29,23)). The spawn cell was (13,1) on all three.
 * **Recorded-route lengths:** maze 21 = 2,579 ticks to the true goal (candidate #2, traj_2/1161); maze 42 = 1,992
   (candidate #1, traj_2/1238). Same-pose links: 65 (maze 21), 190 (maze 42). Build time (sandbox): ~3–4 min for
   features, turns and links, plus ~1 min for goal scoring.
 
 ## 4. Open items, in priority order
 
+0. **Live test of learning:** drive maze 77 again on the computer that holds `runs/nav_20261027_113820.pkl`.
+   - The console should say `nav: learned from 1 earlier drive(s)`, and the route should be ~1,426 ticks.
+   - Goal: SPL ≥ 0.5 (1 point) or ≥ 0.75 (2 points). This rehearses challenge attempts 2–3 exactly.
+   - Also watch for the guard message at look-alikes and for turn-memory hints.
 1. **Live test of the fixed `nav_agent` on a fresh unseen seed** (not 3, 7, 11, 21, 25, 42, 58, 101, 202, 303, 314),
    e.g. `--local 77`.
    - Confirm that a number-key tap registers (console `nav: goal = candidate N` / `(… already the goal)`).
@@ -64,7 +78,8 @@ and a fix for number-key taps. **None of these fixes has been driven live yet.**
    - (b) Measure `need` against a route frame ~0.25 m *ahead*, via its own rotation fit, instead of `fix.yaw + B−H`.
    - (c) Suppress TURN while the driver is already turning that way (we know the last key).
    Tune each on the maze-42 replay before shipping.
-3. **Attempts 2–3 / SPL.** Nothing is built yet. SPL ≥ 0.5 needs about 2× the oracle or better; recorded routes
+3. **Attempts 2–3 / SPL.** **Built since: learning from earlier drives (`tr_map.add_runs`, on by default) — see
+   item 0.** The notes below are the earlier analysis. SPL ≥ 0.5 needs about 2× the oracle or better; recorded routes
    are 3.5–5×, and the driver's own first drives 3×. Options:
    - (a) A "replay my run" mode: a route from the driver's own attempt-1 `runs/nav_*.pkl` (each step is 1 tick
      with the key known exactly), with loops cut by same-pose links within the run, followed by the same `Follower`.

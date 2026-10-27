@@ -101,6 +101,7 @@ class Record:
     index: int          # record index inside the drive
     action: str         # "FORWARD", "LEFT", "FORWARD+LEFT", "IDLE", ...
     path: str
+    ticks: int = TICKS_PER_RECORD   # ticks from the previous record of the drive to this one (own drives: 2)
 
 
 @dataclass
@@ -122,10 +123,11 @@ class TRMap:
         for g in range(n - 1):
             if self.records[g].drive != self.records[g + 1].drive:
                 continue
-            G.add_edge(g, g + 1, w=TICKS_PER_RECORD, kind="drive")
+            tk = self.records[g + 1].ticks
+            G.add_edge(g, g + 1, w=tk, kind="drive")
             nxt = self.records[g + 1].action
             if "FORWARD" not in nxt and "BACKWARD" not in nxt:     # a turn (or a pause) can be undone on the spot
-                G.add_edge(g + 1, g, w=TICKS_PER_RECORD, kind="unturn")
+                G.add_edge(g + 1, g, w=tk, kind="unturn")
         for a in self.starts:                                      # every drive starts at the spawn
             for b in self.starts:
                 if a != b:
@@ -156,8 +158,8 @@ class TRMap:
         which let a far-away spot that half-sees several views win on maze 21)."""
         if self.goal_scores is None:
             return []
-        n = len(self.records)
-        drive = np.array([r.drive for r in self.records])
+        n = len(self.goal_scores)                 # exploration frames only (own drives are added after scoring)
+        drive = np.array([r.drive for r in self.records[:n]])
         S = self.goal_scores.astype(np.float32)
         cl = np.zeros_like(S)
         for m in range(-GOAL_WINDOW, GOAL_WINDOW + 1):
@@ -306,6 +308,128 @@ def score_goal(m: TRMap, targets: list[np.ndarray], cache_dir: Path, K: np.ndarr
     np.save(path, S)
     m.goal_scores = S
     log(f"tr_map: goal views scored against {len(m.records)} frames in {time.time() - t0:.0f}s")
+
+
+# --------------------------------------------------------------------- learning from your own earlier drives
+OWN_SUB = 2                   # keep every 2nd frame of a drive (1 frame per tick)
+OWN_LINK_TOP = 6
+OWN_LINK_MIN = 0.5
+OWN_LINK_PARALLAX = 10.0      # your frame vs an exploration frame (maze 77: real bridges were 6-12 px)
+OWN_LINK_INLIERS = 25
+
+
+def _same_maze(header_data: str, data_dir: str) -> bool:
+    a = Path(str(header_data).replace("\\", "/")).name.lower()
+    b = Path(str(data_dir).replace("\\", "/")).name.lower()
+    return bool(a) and a == b
+
+
+def _read_run(path: Path) -> tuple[dict, list[dict]]:
+    rows = []
+    with open(path, "rb") as fh:
+        while True:
+            try:
+                rows.append(pickle.load(fh))
+            except EOFError:
+                break
+            except Exception:
+                break                                   # a run cut off mid-write: keep what was read
+    if not rows or not isinstance(rows[0], dict) or not rows[0].get("header"):
+        return {}, []
+    return rows[0], [r for r in rows[1:] if "jpg" in r]
+
+
+def _thumbs(paths: list[str]) -> np.ndarray:
+    out = []
+    for p in paths:
+        g = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+        g = np.zeros((240, 320), np.uint8) if g is None else g
+        out.append(cv2.resize(g, THUMB, interpolation=cv2.INTER_AREA).astype(np.float32))
+    return np.stack(out)
+
+
+def _ncc_best(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    W = THUMB[0]
+    best = np.full((len(A), len(B)), -1.0, np.float32)
+    for sh in range(-THUMB_SHIFT, THUMB_SHIFT + 1):
+        a = A[:, :, max(0, sh):W + min(0, sh)].reshape(len(A), -1)
+        b = B[:, :, max(0, -sh):W + min(0, -sh)].reshape(len(B), -1)
+        a = a - a.mean(1, keepdims=True)
+        a /= np.linalg.norm(a, axis=1, keepdims=True) + 1e-6
+        b = b - b.mean(1, keepdims=True)
+        b /= np.linalg.norm(b, axis=1, keepdims=True) + 1e-6
+        np.maximum(best, a @ b.T, out=best)
+    return best
+
+
+def add_runs(m: TRMap, run_paths: list[Path], cache_dir: Path, K: np.ndarray = K_DEFAULT, log=print) -> int:
+    """Add your earlier drives of THIS maze (runs/nav_*.pkl) to the map as extra drives, linked to the exploration
+    frames wherever your view matches one from (nearly) the same spot. Everything you drove is drivable, so routes
+    may use it; on maze 77 this took the route from 3534 to 1364 ticks (SPL 0.29 -> 0.74). Returns drives added."""
+    added = 0
+    n_explore = len(m.goal_scores) if m.goal_scores is not None else len(m.records)
+    for rp in sorted(run_paths):
+        try:
+            header, rows = _read_run(rp)
+            if not rows or not _same_maze(header.get("data", ""), m.data_dir):
+                continue
+            key = f"{rp.stem}_{rp.stat().st_size}_{len(m.records)}"
+            cpath = cache_dir / f"tr_own_{key}.pkl"
+            fdir = cache_dir / f"own_{rp.stem}"
+            if cpath.exists():
+                d = pickle.loads(cpath.read_bytes())
+            else:
+                t0 = time.time()
+                fdir.mkdir(parents=True, exist_ok=True)
+                recs, feats = [], []
+                keep = list(range(0, len(rows), OWN_SUB))
+                for j, k in enumerate(keep):
+                    img = cv2.imdecode(np.frombuffer(rows[k]["jpg"], np.uint8), cv2.IMREAD_COLOR)
+                    if img is None:
+                        continue
+                    path = fdir / f"{k}.jpg"
+                    if not path.exists():
+                        cv2.imwrite(str(path), img)
+                    keys = {str(rows[i].get("key", "")) for i in range(keep[j - 1] if j else k, k)} if j else {"IDLE"}
+                    act = "+".join(sorted(x for x in keys if x)) or "IDLE"
+                    act = act.replace("|", "+")
+                    recs.append((k, act, str(path), (k - keep[j - 1]) if j else 0))
+                    feats.append(rootsift(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)))
+                seq = []
+                for j in range(len(feats) - 1):
+                    a, b = ratio_pairs(feats[j], feats[j + 1])
+                    r = rotation_fit(a, b, K) if a is not None else None
+                    seq.append(r[0] if r else None)
+                seq.append(None)
+                own_t = _thumbs([r[2] for r in recs])
+                exp_t = _thumbs([r.path for r in m.records[:n_explore]])
+                best = _ncc_best(own_t, exp_t)
+                links = []
+                for i in range(len(recs)):
+                    for j in np.argsort(-best[i])[:OWN_LINK_TOP]:
+                        j = int(j)
+                        if best[i, j] < OWN_LINK_MIN:
+                            continue
+                        a, b = ratio_pairs(feats[i], m.feats[j])
+                        r = rotation_fit(a, b, K) if a is not None else None
+                        if r and r[1] <= OWN_LINK_PARALLAX and r[2] >= OWN_LINK_INLIERS:
+                            links.append((i, j, r[0], r[1], r[2]))
+                d = {"recs": recs, "feats": feats, "seq": seq, "links": links}
+                cpath.write_bytes(pickle.dumps(d))
+                log(f"tr_map: learned {rp.name}: {len(recs)} frames, {len(links)} links to the exploration "
+                    f"({time.time() - t0:.0f}s)")
+            base = len(m.records)
+            drive = max(r.drive for r in m.records) + 1
+            m.starts.append(base)
+            for (k, act, path, tk) in d["recs"]:
+                m.records.append(Record(drive, k, act, path, tk))
+            m.feats.extend(d["feats"])
+            m.seq_yaw.extend(d["seq"])
+            m.links.extend((base + i, j, yaw, par, inl) for i, j, yaw, par, inl in d["links"])
+            added += 1
+        except Exception as exc:
+            log(f"tr_map: could not use {rp.name}: {exc}")
+    return added
 
 
 def split_strip(img: np.ndarray) -> list[np.ndarray]:

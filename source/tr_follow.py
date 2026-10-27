@@ -16,11 +16,11 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from tr_map import DEG_PER_TICK, TICKS_PER_RECORD, TRMap, ratio_pairs, rootsift, rotation_fit
+from tr_map import DEG_PER_TICK, TRMap, ratio_pairs, rootsift, rotation_fit
 
 NEAR_BACK = 6            # route frames behind the current place that are checked
 NEAR_AHEAD = 30          # ... and ahead (all of them, via the thumbnail pre-filter)
-FAR_AHEAD = 250          # sparse look-ahead for skipping explorer loops
+FAR_AHEAD = 100000       # sparse look-ahead over the rest of the route (maze 77: a real skip of 319 frames)
 FAR_STEP = 3
 VERIFY = 8               # SIFT-verify this many best thumbnail candidates per frame
 ACCEPT = 15              # inliers to accept a nearby route frame
@@ -33,6 +33,7 @@ LOOK_M = 0.25            # steer toward the route point this far ahead (m); 0.5 
 TURN_EVENT = 50.0        # deg: a change of travel direction this large ahead is announced as "then turn"
 M_PER_TICK = 0.029
 HINT_HOLD = 2            # a new kind of hint must repeat this many frames before it is shown
+TURN_MEMORY_TICKS = 10   # after losing the route, turn guidance stays valid until you drive this many ticks
 THUMB = (32, 24)
 THUMB_SHIFT = 6
 
@@ -80,11 +81,11 @@ class Follower:
             ru, rv = m.records[u], m.records[v]
             if rv.drive == ru.drive and v == u + 1:
                 dy = m.seq_yaw[u] or 0.0
-                f = TICKS_PER_RECORD if "FORWARD" in rv.action else 0
-                t = TICKS_PER_RECORD
+                f = rv.ticks if "FORWARD" in rv.action else 0
+                t = rv.ticks
             elif rv.drive == ru.drive and v == u - 1:
                 dy = -(m.seq_yaw[v] or 0.0)
-                f, t = 0, TICKS_PER_RECORD
+                f, t = 0, ru.ticks
             else:
                 dy = links.get((u, v), 0.0)
                 f, t = 0, abs(dy) / DEG_PER_TICK
@@ -107,6 +108,10 @@ class Follower:
         self._shown = ("start", "Drive along the route: follow the hints")
         self._cand = None
         self._cand_n = 0
+        self.prev_live = None          # features of the previous camera frame (for the turn between frames)
+        self.turned = 0.0              # deg turned LEFT since the last fix
+        self.moved = 0.0               # forward/backward ticks since the last fix
+        self.last_need = None          # turn that was needed at the last fix (deg, left +)
 
     # ------------------------------------------------------------------ localisation
     def _candidates(self, live_thumb: np.ndarray, wide: bool) -> list[int]:
@@ -124,9 +129,20 @@ class Follower:
         near = [i for i in range(self.p, min(n, self.p + 4))]
         return list(dict.fromkeys(list(near) + [int(i) for i in top]))
 
-    def localise(self, image: np.ndarray) -> Fix | None:
+    def localise(self, image: np.ndarray, moved_ticks: float = 0.0, key_turn: float | None = None) -> Fix | None:
+        """moved_ticks: forward/backward ticks sent since the previous frame; key_turn: deg LEFT the keys asked for
+        (fallback when the images can't measure the turn)."""
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
         live = rootsift(gray)
+        if self.prev_live is not None:
+            a, b = ratio_pairs(self.prev_live, live)
+            r = rotation_fit(a, b, self.K) if a is not None else None
+            if r is not None and r[2] >= 15:
+                self.turned += r[0]
+            elif key_turn is not None:
+                self.turned += key_turn
+        self.prev_live = live
+        self.moved += abs(moved_ticks)
         wide = self.misses >= LOST_AFTER
         best: Fix | None = None
         for i in self._candidates(_thumb(gray), wide):
@@ -162,6 +178,9 @@ class Follower:
         self.misses = 0
         self.p = fix.i
         self.fix = fix
+        self.last_need = fix.yaw + (self.B[fix.i] - self.H[fix.i])
+        self.turned = 0.0
+        self.moved = 0.0
         return fix
 
     # ------------------------------------------------------------------ hints
@@ -202,6 +221,13 @@ class Follower:
             if self.misses >= LOST_AFTER and self.remaining_records() <= 25:
                 return "lost", ("NEAR THE GOAL: look around for the goal view (top-right photos); when you see it, "
                                 "let go of the keys and wait for READY")
+            if self.misses >= LOST_AFTER and self.last_need is not None and self.moved <= TURN_MEMORY_TICKS:
+                need = self.last_need - self.turned
+                if abs(need) >= TURN_SAY * 0.5:
+                    side = "LEFT" if need > 0 else "RIGHT"
+                    return f"re{side}", (f"YOU TURNED AWAY FROM THE ROUTE: TURN {side} ~{round(abs(need) / DEG_PER_TICK)} "
+                                         f"presses ({abs(need):.0f} deg) to face it again")
+                return "refwd", "FACING THE ROUTE AGAIN: drive FORWARD slowly until the 'you are here' picture matches"
             if self.misses >= LOST_AFTER:
                 return "lost", ("NOT SURE WHERE YOU ARE: turn slowly on the spot (or back up a little) until the "
                                 "'you are here' picture matches; the hints come back by themselves")
@@ -223,7 +249,8 @@ class Follower:
         side = "LEFT" if deg > 0 else "RIGHT"
         presses = (self.S[t] - self.S[i]) / M_PER_TICK
         if abs(deg) >= 150:
-            side = "AROUND"
+            return "dead", (f"DEAD END AHEAD (~{presses:.0f} presses): the explorer drove in and turned around there. "
+                            f"Skip it if you see the way on -- the hints will find you again")
         if presses < 3:
             return f"soon{side}", f"TURN {side} NOW ~{round(abs(deg) / DEG_PER_TICK)} presses ({abs(deg):.0f} deg)"
         return f"fwd{side}", f"FORWARD ~{presses:.0f} presses, then turn {side} ({abs(deg):.0f} deg)"

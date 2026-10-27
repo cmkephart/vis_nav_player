@@ -34,6 +34,8 @@ from vis_nav_sdk import WAIT, Action, SessionInfo, run
 
 LOGS = Path("logs")
 SECOND_SPACE_S = 3.0
+GOAL_FAR = 60            # route frames: phase B may not take over while the route is sure the goal is this far
+TRUST_KEY = "g"          # hold G: let phase B take over anyway (if the route itself is wrong)
 HERE = (76, 209, 132)
 TURN = (178, 140, 255)
 AFTER = (108, 180, 255)
@@ -59,7 +61,8 @@ def _is(a, target) -> bool:
 
 class NavAgent(KeyboardAgent):
     def __init__(self, data_dir: Path, cache_dir: Path, *, handoff: int = 8, probe: bool = False,
-                 confirm: bool = True, guard_space: bool = True, open_picture: bool = True) -> None:
+                 confirm: bool = True, guard_space: bool = True, open_picture: bool = True,
+                 learn: bool = True) -> None:
         self.data_dir = Path(data_dir)
         self.cache_dir = Path(cache_dir)
         self.m = TM.build(self.data_dir, self.cache_dir)
@@ -71,6 +74,16 @@ class NavAgent(KeyboardAgent):
                 TM.score_goal(self.m, self.file_views, self.cache_dir)
             except Exception:
                 report("pre-scoring target.jpg (will score at setup instead)")
+        self.learned = 0
+        if learn:                           # attempts 2-3: your earlier drives of this maze join the map
+            try:
+                runs = sorted(Path("runs").glob("nav_*.pkl"))
+                if runs:
+                    self.learned = TM.add_runs(self.m, runs, self.cache_dir)
+                    if self.learned:
+                        print(f"nav: learned from {self.learned} earlier drive(s) of this maze -- routes may use them")
+            except Exception:
+                report("learning from earlier drives (skipped)")
         self.handoff, self.probe, self.confirm, self.guard_space = handoff, probe, confirm, guard_space
         self.open_picture = open_picture
         self.tag, self.log_name = "nav", "phase_b.csv"
@@ -102,6 +115,8 @@ class NavAgent(KeyboardAgent):
         self._notice_b = ""
         self._ms = 0.0
         self._rec = None
+        self._last_out = None
+        self._far_warn = False
 
     # ------------------------------------------------------------------ setup: goal candidates, route, phase B
     def setup(self, info: SessionInfo) -> None:
@@ -205,7 +220,11 @@ class NavAgent(KeyboardAgent):
             if self.follow is not None:
                 t0 = time.perf_counter()
                 try:
-                    self.follow.localise(obs.image)
+                    name = getattr(_act(self._last_out), "name", "") or ""
+                    n = self._last_out[1] if isinstance(self._last_out, tuple) and len(self._last_out) > 1 else 1
+                    moved = n if ("FORWARD" in name or "BACKWARD" in name) else 0
+                    key_turn = (3.44 * n if "LEFT" in name else -3.44 * n if "RIGHT" in name else 0.0)
+                    self.follow.localise(obs.image, moved_ticks=moved, key_turn=key_turn)
                     self._hint = self.follow.stable_hint()
                     self._panel = self._route_panel()
                 except Exception:
@@ -221,6 +240,7 @@ class NavAgent(KeyboardAgent):
             out = action
         out = self._space_guard(action, out, was_ready)
         self._record(obs, out)
+        self._last_out = out
         return out
 
     def _record(self, obs, out) -> None:
@@ -284,8 +304,14 @@ class NavAgent(KeyboardAgent):
                     cv2.imwrite(str(LOGS / "best_live.png"), obs.image)
             else:
                 self.final.last = None
-        if self.final.sees_goal(self.final.last):
+        route_far = (self.follow is not None and self.follow.fix is not None
+                     and self.follow.remaining_records() > GOAL_FAR and not self._trust_key())
+        sees = self.final.sees_goal(self.final.last)
+        self._far_warn = bool(sees and route_far)
+        if sees and not route_far:
             self._engaged = True
+        if route_far:
+            self._engaged = False
         if keys_held:
             self.final.reset_budget()
             self._ready = None
@@ -307,6 +333,13 @@ class NavAgent(KeyboardAgent):
             self.final.charge(move)
             return move
         return action
+
+    def _trust_key(self) -> bool:
+        try:
+            keys = self.viewer.keys()
+            return TRUST_KEY in keys or TRUST_KEY.upper() in keys
+        except Exception:
+            return False
 
     def _space_guard(self, keyboard, out, was_ready: bool):
         pressed = _is(keyboard, Action.CHECKIN)
@@ -358,7 +391,11 @@ class NavAgent(KeyboardAgent):
         if self.cands and self.choosing:
             lines.append(f">>> GOAL CANDIDATES in the bottom strip (not your position): press 1-{len(self.cands)} "
                          f"(now {self.chosen + 1}), arrows to start")
-        if self._ready:
+        if self._far_warn and not self._ready:
+            lines.append(f">>> LOOKS LIKE THE GOAL, BUT THE ROUTE SAYS IT IS STILL FAR (route {self.follow.p}/"
+                         f"{len(self.follow.route) - 1}): probably a look-alike -- compare the neighbouring panels. "
+                         f"If it IS the goal, hold G and let go of the arrows so phase B takes over")
+        elif self._ready:
             lines.append(f">>> {self._ready}")
         elif self._space_armed and time.monotonic() - self._space_armed <= SECOND_SPACE_S:
             lines.append(f">>> {self._notice_b}")
@@ -394,9 +431,11 @@ if __name__ == "__main__":
     parser.add_argument("--auto-checkin", action="store_true", help="phase B checks in by itself")
     parser.add_argument("--single-space", action="store_true", help="disable the double-SPACE guard")
     parser.add_argument("--no-open", action="store_true", help="don't open logs/goal_candidates.png automatically")
+    parser.add_argument("--no-learn", action="store_true", help="ignore earlier drives in runs/ (exploration data only)")
     args = parser.parse_args()
     challenge = cli.challenge(args)
     data = cli.exploration_data(args, args.data)
     agent = NavAgent(data, Path("cache") / challenge.replace(":", "-"), handoff=args.handoff, probe=args.probe,
-                     confirm=not args.auto_checkin, guard_space=not args.single_space, open_picture=not args.no_open)
+                     confirm=not args.auto_checkin, guard_space=not args.single_space, open_picture=not args.no_open,
+                     learn=not args.no_learn)
     run(agent, challenge, **cli.run_options(args))

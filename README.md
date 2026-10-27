@@ -51,6 +51,7 @@ Options for all agents:
 Options for `nav_agent.py` only:
 
 - `--no-open`: don't pop up the candidate picture.
+- `--no-learn`: ignore earlier drives in `runs/` (plan from the exploration data only).
 - `--handoff N`: how close to the end of the route (in route frames) phase B starts measuring every frame.
 
 ## 3. Driving `nav_agent.py`
@@ -72,6 +73,10 @@ Options for `nav_agent.py` only:
      - `FORWARD ~n presses, then turn LEFT`
      - `TURN AROUND`
      - `TURN … NOW`
+     - `YOU TURNED AWAY FROM THE ROUTE: TURN LEFT ~n presses`: you turned off the route's view at a spot; it
+       measured how far you turned and tells you how to face the route again.
+     - `DEAD END AHEAD (~n presses)`: the explorer drove into a dead end there and turned around. Skip it if you
+       can see the way on; the hints find you again.
      - `NOT SURE WHERE YOU ARE`: turn slowly on the spot until the YOU ARE HERE picture matches; the hints come
        back by themselves.
      - `NEAR THE GOAL: look for the goal view`
@@ -79,13 +84,26 @@ Options for `nav_agent.py` only:
    - The strip shows **YOU ARE HERE** (the route frame you match), **NEXT TURN … starts here**, **…after the turn**
      and **GOAL**. Use the pictures as much as the text.
    - The status line shows route progress, ticks left and match strength.
-4. **Near the goal, let go of the keys.**
+4. **Look-alike guard.** If phase B sees a goal-like view while the route says the goal is still far (more than
+   60 route frames), it does not take over, and the top line says `LOOKS LIKE THE GOAL, BUT THE ROUTE SAYS IT IS
+   STILL FAR`. That was a real look-alike on maze 77. If you are sure it *is* the goal (the route can be wrong),
+   **hold G** and let go of the arrows, and phase B takes over.
+5. **Near the goal, let go of the keys.**
    - Phase B aligns and prints `READY -- press SPACE`.
    - If the view is not clearly the goal view, nudge with the arrows and let go again.
    - SPACE before READY is blocked once; press it again within 3 s to force a check-in.
 
-Every drive is saved to `runs/nav_<time>.pkl` (all frames, keys and hints). **Keep these files**: they are how
-the hints get tuned, because a drive can be replayed offline frame by frame.
+Every drive is saved to `runs/nav_<time>.pkl` (all frames, keys and hints). **Keep these files**:
+
+- **Attempts 2–3 learn from them automatically.** On start, every `runs/nav_*.pkl` from the *same maze* (matched
+  by the data folder name) is added to the map as an extra drive, linked to the exploration frames wherever your
+  view matched one from the same spot. The console says `nav: learned from N earlier drive(s)`. Your drive
+  connects places the exploration data never connects, so the route gets much shorter: on maze 77 it went from
+  3,534 to 1,426 ticks (SPL 0.29 → 0.71 if driven exactly). Drives of other mazes are ignored. The first start
+  after a new drive adds about a minute; after that it loads from cache.
+- **Learning only works on the computer that holds the files.** `runs/` is git-ignored, so drive all three
+  challenge attempts on the same computer, or copy `runs/` across.
+- They are also how the hints get tuned, because a drive can be replayed offline frame by frame.
 
 ## 4. How the new phase A works
 
@@ -109,6 +127,12 @@ the hints get tuned, because a drive can be replayed offline frame by frame.
 - A far jump needs 2 confirmations and ≤ 25 px of parallax.
 - Hints steer toward the route point 0.25 m ahead, so the explorer's wiggles average out. A new hint must repeat
   before it replaces the one shown.
+- When it loses the route, it keeps measuring how far you turn (from consecutive camera frames, with the keys as a
+  backup). Until you drive more than 10 ticks, it can still tell you which way the route is.
+- It also blocks phase B from taking over at a look-alike while the route says the goal is far.
+
+**Learning (`tr_map.add_runs`)** adds your earlier drives of the same maze as extra drives (every 2nd frame),
+linked to exploration frames at ≤ 10 px parallax. Everything you drove is drivable, so routes may use it.
 
 **Trade-off:** the route follows where the explorer actually drove, so it is safe but longer than the shortest
 path (maze 21: 2,579 ticks vs 532 optimal; maze 42: 1,992 vs 571). If you cut corners, the follower keeps up.
@@ -119,7 +143,8 @@ path (maze 21: 2,579 ticks vs 532 optimal; maze 42: 1,992 vs 571). If you cut co
 |---|---|---|
 | 21 (unseen then) | final_route_agent + picker | 6/10, 0.01 m, 1°, SPL 0.30 |
 | 21 (3rd drive, known) | nav_agent | 6/10, 0.04 m, 1°, SPL 0.30 |
-| **42 (unseen)** | **nav_agent** | **6/10, 0.07 m, 1°, SPL 0.34**; hints "much better than before" |
+| 42 (unseen) | nav_agent | 6/10, 0.07 m, 1°, SPL 0.34; hints "much better than before" |
+| **77 (unseen)** | **nav_agent** | **6/10, 0.02 m, 1°, SPL 0.44**; one look-alike READY (now guarded), some dead ends |
 | 202 (route known) | final_agent | 9/10, SPL 1.00 (0.11 m) |
 | 7 (route known) | final_agent | 9/10, SPL 0.90 |
 | 58, 101, 314, 303, 202 (first drives) | final_agent | 6/10 each, SPL 0.11–0.32 |
@@ -193,8 +218,11 @@ hint = f.stable_hint()
 1. `git pull`, and check that `.env` has `VIS_NAV_CHALLENGE=da90a443e215`.
 2. `uv run source/nav_agent.py`: it downloads the data and builds the cache **before** connecting (3–5 min).
 3. Choose the goal from the picture, drive, let go near the goal, and press SPACE at READY.
-4. After each attempt, copy `runs/nav_*.pkl` and `logs/` somewhere safe (for the report and for attempts 2–3).
-5. Attempts 2–3: drive the route you now know as directly as you can. SPL points come from these.
+4. After each attempt, back up `runs/nav_*.pkl` and `logs/` (for the report). **Leave `runs/` in place**:
+   attempts 2–3 learn from it.
+5. Attempts 2–3: start the agent again on the **same computer**. Check that the console says
+   `nav: learned from N earlier drive(s)`, and that the route length is shorter than in attempt 1. Then follow it.
+   SPL points come from these attempts.
 
 ## 10. Hand-in zip (flat)
 
