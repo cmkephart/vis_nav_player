@@ -26,9 +26,10 @@ VERIFY = 8               # SIFT-verify this many best thumbnail candidates per f
 ACCEPT = 15              # inliers to accept a nearby route frame
 ACCEPT_FAR = 30          # inliers to jump ahead beyond NEAR_AHEAD ...
 FAR_CONFIRM = 2          # ... seen this many frames in a row
+FAR_PARALLAX = 25.0      # px: a far jump must be (nearly) the same position, not just shared features
 LOST_AFTER = 4           # frames without an accepted match before saying "lost"
-TURN_SAY = 20.0          # deg: below this the view counts as lined up
-LOOK_M = 0.5             # steer toward the route point this far ahead (m): the explorer's wiggles average out
+TURN_SAY = 30.0          # deg: below this the view counts as lined up (replay of a real drive: 20 gave twice the false turns)
+LOOK_M = 0.25            # steer toward the route point this far ahead (m); 0.5 cut corners in 0.2 m corridors
 TURN_EVENT = 50.0        # deg: a change of travel direction this large ahead is announced as "then turn"
 M_PER_TICK = 0.029
 HINT_HOLD = 2            # a new kind of hint must repeat this many frames before it is shown
@@ -137,8 +138,11 @@ class Follower:
             far = i > self.p + NEAR_AHEAD or i < self.p - NEAR_BACK
             if inl < (ACCEPT_FAR if far else ACCEPT):
                 continue
-            # prefer ahead over behind at similar strength (you came from behind)
-            score = inl + (2 if i >= self.p else 0) - 0.05 * abs(i - self.p)
+            if far and par > FAR_PARALLAX:          # different position that shares features (maze 42: 69 px)
+                continue
+            # prefer ahead over behind at similar strength (you came from behind); when lost, stay near the last
+            # sure place unless a far frame is clearly better (look-alikes along the route itself exist)
+            score = inl + (2 if i >= self.p else 0) - (0.15 if wide else 0.05) * abs(i - self.p)
             if best is None or score > best[0]:
                 best = (score, Fix(i, inl, yaw, par))
         if best is None:
@@ -147,7 +151,7 @@ class Follower:
             return None
         fix = best[1]
         far = fix.i > self.p + NEAR_AHEAD or fix.i < self.p - NEAR_BACK
-        if far and not wide:
+        if far:                                          # a far jump is always confirmed, lost or not
             n_seen = self.far_pending[1] + 1 if self.far_pending and abs(self.far_pending[0] - fix.i) <= 6 else 1
             self.far_pending = (fix.i, n_seen)
             if n_seen < FAR_CONFIRM:
@@ -195,12 +199,14 @@ class Follower:
     def hint(self) -> tuple[str, str]:
         """(kind, text). kind is used for the hold-before-change rule."""
         if self.fix is None:
+            if self.misses >= LOST_AFTER and self.remaining_records() <= 25:
+                return "lost", ("NEAR THE GOAL: look around for the goal view (top-right photos); when you see it, "
+                                "let go of the keys and wait for READY")
             if self.misses >= LOST_AFTER:
                 return "lost", ("NOT SURE WHERE YOU ARE: turn slowly on the spot (or back up a little) until the "
                                 "'you are here' picture matches; the hints come back by themselves")
             return self._shown
         i = self.fix.i
-        n = len(self.route)
         if self.remaining_records() <= 3:
             return "goal", "GOAL AHEAD: let go of the keys and wait for READY"
         need = self.fix.yaw + (self.B[i] - self.H[i])     # + = turn left: line up with the route's direction

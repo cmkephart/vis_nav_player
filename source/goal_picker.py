@@ -32,6 +32,25 @@ VIEW_NAMES = ["FRONT", "LEFT", "BACK", "RIGHT"]
 _DIGIT_PREFIXES = ("", "kp", "kp_", "keypad", "keypad_", "num", "num_", "numpad", "numpad_")
 
 
+def digit_of_any(keys) -> int | None:
+    """digit_of over everything the viewer's Keys object offers: held now, or tapped since the last poll
+    (a quick tap can fall between two polls of the held set)."""
+    d = digit_of(keys)
+    if d is not None:
+        return d
+    for name in ("tapped", "held"):
+        part = getattr(keys, name, None)
+        try:
+            part = part() if callable(part) else part
+        except Exception:
+            part = None
+        if part is not None:
+            d = digit_of(part)
+            if d is not None:
+                return d
+    return None
+
+
 def digit_of(keys) -> int | None:
     """1..9 if a number key (top row or keypad) is held, else None. ``keys`` only needs ``in``:
     the viewer's Keys object supports membership tests but is not iterable."""

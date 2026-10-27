@@ -249,11 +249,13 @@ class NavAgent(KeyboardAgent):
         keys = self.viewer.keys() if getattr(self, "viewer", None) is not None else None
         if keys is None:
             return
-        d = GP.digit_of(keys)
+        d = GP.digit_of_any(keys)
         if d is not None and not self.digit_down:
             if d <= len(self.cands) and d - 1 != self.chosen:
                 self._choose(d - 1)
                 self._write_montage()
+            elif d - 1 == self.chosen:
+                print(f"(candidate {d} is already the goal)", flush=True)
             elif d > len(self.cands):
                 print(f"no candidate {d} (there are {len(self.cands)})", flush=True)
         self.digit_down = d is not None
