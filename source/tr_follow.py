@@ -219,18 +219,16 @@ class Follower:
         """(kind, text). kind is used for the hold-before-change rule."""
         if self.fix is None:
             if self.misses >= LOST_AFTER and self.remaining_records() <= 25:
-                return "lost", ("NEAR THE GOAL: look around for the goal view (top-right photos); when you see it, "
-                                "let go of the keys and wait for READY")
+                return "lost", "NEAR THE GOAL: look for the goal view (top right); when you see it, let go and wait for READY"
             if self.misses >= LOST_AFTER and self.last_need is not None and self.moved <= TURN_MEMORY_TICKS:
                 need = self.last_need - self.turned
                 if abs(need) >= TURN_SAY * 0.5:
                     side = "LEFT" if need > 0 else "RIGHT"
-                    return f"re{side}", (f"YOU TURNED AWAY FROM THE ROUTE: TURN {side} ~{round(abs(need) / DEG_PER_TICK)} "
-                                         f"presses ({abs(need):.0f} deg) to face it again")
-                return "refwd", "FACING THE ROUTE AGAIN: drive FORWARD slowly until the 'you are here' picture matches"
+                    return f"re{side}", (f"OFF THE ROUTE: TURN {side} ~{round(abs(need) / DEG_PER_TICK)} presses "
+                                         f"({abs(need):.0f} deg) to face it again")
+                return "refwd", "FACING THE ROUTE AGAIN: FORWARD slowly until YOU ARE HERE matches"
             if self.misses >= LOST_AFTER:
-                return "lost", ("NOT SURE WHERE YOU ARE: turn slowly on the spot (or back up a little) until the "
-                                "'you are here' picture matches; the hints come back by themselves")
+                return "lost", "NOT SURE WHERE YOU ARE: turn slowly on the spot until YOU ARE HERE matches"
             return self._shown
         i = self.fix.i
         if self.remaining_records() <= 3:
@@ -249,8 +247,8 @@ class Follower:
         side = "LEFT" if deg > 0 else "RIGHT"
         presses = (self.S[t] - self.S[i]) / M_PER_TICK
         if abs(deg) >= 150:
-            return "dead", (f"DEAD END AHEAD (~{presses:.0f} presses): the explorer drove in and turned around there. "
-                            f"Skip it if you see the way on -- the hints will find you again")
+            return "dead", (f"DEAD END AHEAD (~{presses:.0f} presses): the explorer turned around there. "
+                            f"Skip it if you see the way on")
         if presses < 3:
             return f"soon{side}", f"TURN {side} NOW ~{round(abs(deg) / DEG_PER_TICK)} presses ({abs(deg):.0f} deg)"
         return f"fwd{side}", f"FORWARD ~{presses:.0f} presses, then turn {side} ({abs(deg):.0f} deg)"

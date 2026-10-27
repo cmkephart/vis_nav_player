@@ -64,7 +64,10 @@ The fallback (`final_route_agent.py` + picker) still works.
 
 ## 4. Open items, in priority order
 
-0. **Live test of learning:** drive maze 77 again on the computer that holds `runs/nav_20261027_113820.pkl`.
+0. **DONE — live test of learning (Tue afternoon): maze 77 second drive, 7/10, SPL 0.52.** The route was 1,410 ticks
+   (3,534 without learning), and the driver took 1,939. Dead-end warnings were "good". The HUD was cut off at about 55
+   characters, so it now wraps at 54 (`HUD_WIDTH` in `nav_agent.py`) and the long hints are shortened. Original plan:
+   drive maze 77 again on the computer that holds `runs/nav_20261027_113820.pkl`.
    - The console should say `nav: learned from 1 earlier drive(s)`, and the route should be ~1,426 ticks.
    - Goal: SPL ≥ 0.5 (1 point) or ≥ 0.75 (2 points). This rehearses challenge attempts 2–3 exactly.
    - Also watch for the guard message at look-alikes and for turn-memory hints.

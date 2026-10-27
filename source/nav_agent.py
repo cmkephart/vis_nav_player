@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import textwrap
 import time
 import traceback
 from pathlib import Path
@@ -34,6 +35,7 @@ from vis_nav_sdk import WAIT, Action, SessionInfo, run
 
 LOGS = Path("logs")
 SECOND_SPACE_S = 3.0
+HUD_WIDTH = 54           # characters the viewer's agent panel shows per line (longer lines were cut off)
 GOAL_FAR = 60            # route frames: phase B may not take over while the route is sure the goal is this far
 TRUST_KEY = "g"          # hold G: let phase B take over anyway (if the route itself is wrong)
 HERE = (76, 209, 132)
@@ -387,14 +389,21 @@ class NavAgent(KeyboardAgent):
         return self._panel
 
     def hud(self) -> list[str]:
+        out = []
+        for line in self._hud_lines():
+            parts = textwrap.wrap(line, HUD_WIDTH, subsequent_indent="    ", break_on_hyphens=False) or [""]
+            out += parts
+        return out
+
+    def _hud_lines(self) -> list[str]:
         lines = []
         if self.cands and self.choosing:
             lines.append(f">>> GOAL CANDIDATES in the bottom strip (not your position): press 1-{len(self.cands)} "
                          f"(now {self.chosen + 1}), arrows to start")
         if self._far_warn and not self._ready:
-            lines.append(f">>> LOOKS LIKE THE GOAL, BUT THE ROUTE SAYS IT IS STILL FAR (route {self.follow.p}/"
-                         f"{len(self.follow.route) - 1}): probably a look-alike -- compare the neighbouring panels. "
-                         f"If it IS the goal, hold G and let go of the arrows so phase B takes over")
+            lines.append(f">>> LOOK-ALIKE? Goal-like view, but the route says the goal is still far "
+                         f"(route {self.follow.p}/{len(self.follow.route) - 1}). Compare the neighbouring panels. "
+                         f"If it IS the goal: hold G and let go")
         elif self._ready:
             lines.append(f">>> {self._ready}")
         elif self._space_armed and time.monotonic() - self._space_armed <= SECOND_SPACE_S:

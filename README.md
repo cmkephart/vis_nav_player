@@ -73,10 +73,10 @@ Options for `nav_agent.py` only:
      - `FORWARD ~n presses, then turn LEFT`
      - `TURN AROUND`
      - `TURN … NOW`
-     - `YOU TURNED AWAY FROM THE ROUTE: TURN LEFT ~n presses`: you turned off the route's view at a spot; it
-       measured how far you turned and tells you how to face the route again.
-     - `DEAD END AHEAD (~n presses)`: the explorer drove into a dead end there and turned around. Skip it if you
-       can see the way on; the hints find you again.
+     - `OFF THE ROUTE: TURN LEFT ~n presses`: you turned off the route's view at a spot; it measured how far you
+       turned and tells you how to face the route again.
+     - `DEAD END AHEAD (~n presses)`: the explorer turned around there. Skip it if you can see the way on; the
+       hints find you again.
      - `NOT SURE WHERE YOU ARE`: turn slowly on the spot until the YOU ARE HERE picture matches; the hints come
        back by themselves.
      - `NEAR THE GOAL: look for the goal view`
@@ -85,8 +85,8 @@ Options for `nav_agent.py` only:
      and **GOAL**. Use the pictures as much as the text.
    - The status line shows route progress, ticks left and match strength.
 4. **Look-alike guard.** If phase B sees a goal-like view while the route says the goal is still far (more than
-   60 route frames), it does not take over, and the top line says `LOOKS LIKE THE GOAL, BUT THE ROUTE SAYS IT IS
-   STILL FAR`. That was a real look-alike on maze 77. If you are sure it *is* the goal (the route can be wrong),
+   60 route frames), it does not take over, and the top line says `LOOK-ALIKE? Goal-like view, but the route
+   says the goal is still far`. That was a real look-alike on maze 77. If you are sure it *is* the goal (the route can be wrong),
    **hold G** and let go of the arrows, and phase B takes over.
 5. **Near the goal, let go of the keys.**
    - Phase B aligns and prints `READY -- press SPACE`.
@@ -144,13 +144,16 @@ path (maze 21: 2,579 ticks vs 532 optimal; maze 42: 1,992 vs 571). If you cut co
 | 21 (unseen then) | final_route_agent + picker | 6/10, 0.01 m, 1°, SPL 0.30 |
 | 21 (3rd drive, known) | nav_agent | 6/10, 0.04 m, 1°, SPL 0.30 |
 | 42 (unseen) | nav_agent | 6/10, 0.07 m, 1°, SPL 0.34; hints "much better than before" |
-| **77 (unseen)** | **nav_agent** | **6/10, 0.02 m, 1°, SPL 0.44**; one look-alike READY (now guarded), some dead ends |
+| 77 (unseen) | nav_agent | 6/10, 0.02 m, 1°, SPL 0.44; one look-alike READY (now guarded), some dead ends |
+| **77 (2nd drive, learned route)** | **nav_agent + learning** | **7/10, 0.02 m, 1°, SPL 0.52**: route 1,410 ticks (3,534 without learning) |
 | 202 (route known) | final_agent | 9/10, SPL 1.00 (0.11 m) |
 | 7 (route known) | final_agent | 9/10, SPL 0.90 |
 | 58, 101, 314, 303, 202 (first drives) | final_agent | 6/10 each, SPL 0.11–0.32 |
 
-Lesson: distance and heading (6 points) are reliable. SPL points have only come from driving a route the driver
-already knew.
+Lesson: distance and heading (6 points) are reliable. SPL points come from the second drive of a maze; with
+learning, that second drive gets a planned route through your first drive (maze 77: SPL 0.44 → 0.52).
+
+The agent panel shows about 54 characters per line, so the HUD wraps long lines.
 
 ## 6. Repository map (`source/`)
 
