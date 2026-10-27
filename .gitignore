@@ -22,4 +22,4 @@ vis_nav_player.log
 # route tracker output
 tracking_debug/
 runs/
-tracking_log.csv
+tracking_log.csvlogs/upload_*.zip
